@@ -1,0 +1,78 @@
+version: '3'
+
+services:
+  # application
+  app:
+    build:
+      context: .
+    container_name: django
+    volumes:
+      - ./app:/app
+    ports:
+      - 8000:8000
+    command: >
+      sh -c "python manage.py makemigrations &&
+              python3 manage.py migrate &&
+              python3 manage.py wait_for_db &&
+              python3 manage.py runserver 0.0.0.0:8000"
+    env_file:
+      - ./.env
+    depends_on:
+      - pgdb
+      - redis
+
+  # database
+  pgdb:
+    image: postgres:10-alpine
+    container_name: pgdb
+    env_file:
+      - ./.env
+    volumes: 
+      - pgdata:/var/lib/postgresql/data
+
+  # database manager
+  adminer:
+    image: adminer
+    restart: always
+    ports:
+      - 8080:8080
+
+  # message broker
+  redis:
+    image: redis:alpine
+  
+  # worker
+  celery:
+    restart: always
+    build: 
+      context: .
+    container_name: celery
+    command: >
+      sh -c "celery -A app worker -l INFO &&
+              celery -A app beat -l INFO --scheduler django_celery_beat.schedulers:DatabaseScheduler"
+    volumes:
+      - ./app:/app
+    env_file:
+      - ./.env
+    depends_on:
+      - pgdb
+      - redis
+
+  # monitoring task
+  flower:
+    container_name: flower
+    build:
+      context: .
+    command: celery -A app flower --port=5555
+    ports:
+      - 5556:5555
+    environment:
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+    depends_on:
+      - app
+      - redis
+      - celery
+  
+volumes:
+  pgdata:
